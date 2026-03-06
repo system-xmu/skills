@@ -1,0 +1,4 @@
+interface:
+  display_name: "Meeting Minutes DOCX"
+  short_description: "Turn transcript and PPT markdown into Word meeting minutes"
+  default_prompt: "Use $meeting-minutes-docx to organize transcript + PPT markdown into the required meeting-minutes format and export a .docx."
