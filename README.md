@@ -21,6 +21,12 @@
 - 关键输入：`transcript`、`ppt_md_path`、可选 `output_docx_path`
 - 依赖：`python3`、`pandoc`
 
+调用样例（对话中）：
+
+```text
+$meeting-minutes-docx [PPT路径] [腾讯会议发言记录] [保存路径 默认~/Desktop/temp]
+```
+
 示例：
 
 ```bash
