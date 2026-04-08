@@ -13,6 +13,7 @@
 | Skill | 功能 | 目录 | 备注 |
 | --- | --- | --- | --- |
 | `meeting-minutes-docx` | 转写文本 + Markdown格式PPT -> 中文会议纪要 `.docx` | `meeting-minutes-docx/` | 浪潮双周会用 |
+| `marp-slide-writer` | 为现有 Marp 汇报补写、重写章节或局部页面 | `marp-slide-writer/` | 增量写作，不负责完整 deck 生成 |
 
 ### `meeting-minutes-docx`
 
@@ -41,3 +42,16 @@ python3 meeting-minutes-docx/scripts/export_docx.py \
 - 目录内推荐结构：`scripts/`、`references/`、`agents/`。
 - 说明文档尽量 agent 无关，避免写死某个工具专用流程。
 - 更新或新增 skill 后，同步更新本 README 的 `Skills` 列表。
+
+### `marp-slide-writer`
+
+- 目录：`marp-slide-writer/`
+- 功能：为现有 Marp Markdown 汇报补写章节、重写页面、整理项目进展/架构/风险/计划内容
+- 关键输入：目标 `.md` 幻灯片路径、要补写的主题或来源笔记
+- 依赖：无额外脚本依赖，按当前工作区 Marp 规范写作
+
+调用样例（对话中）：
+
+```text
+$marp-slide-writer 给 /absolute/path/to/slides.md 补一页本周进展，保持当前 am_xmu 风格
+```

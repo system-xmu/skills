@@ -1,0 +1,6 @@
+interface:
+  display_name: "Marp 章节写作"
+  short_description: "为现有 Marp 文档补写或重写章节内容"
+  default_prompt: "使用 $marp-slide-writer 在现有 Marp 文档中补写或重写章节，保持当前工作区的写作风格。"
+policy:
+  allow_implicit_invocation: true
