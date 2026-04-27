@@ -56,6 +56,7 @@ Use Playwright MCP tools when extracting transcript content from a page:
 - `mcp__playwright__browser_navigate`
 - `mcp__playwright__browser_evaluate`
 - `mcp__playwright__browser_run_code`
+- `mcp__playwright__browser_tabs` when navigation reports a temporary MCP Bridge connection timeout
 
 Debug-only tools (use only when extraction fails and DOM diagnosis is needed):
 
@@ -100,6 +101,7 @@ Require these tools for the full workflow:
 - Resolve the page source first.
   - If `transcript_page_url` is provided, navigate to it using `browser_navigate`.
   - Otherwise operate on the current browser page.
+  - If navigation fails with a Playwright MCP Bridge / extension connection timeout, do not immediately conclude Playwright is unavailable. Run `browser_tabs list` once to give the bridge extension a chance to finish connecting, then retry `browser_navigate` once. Only treat it as unavailable if the retry still fails.
 - Run a single `browser_evaluate` state check to confirm the page is ready.
   - Check: is the page logged in (title contains `录制文件`)? Does it have a `转写` tab? Does it have a `.minutes-module-list` container?
   - If not logged in, stop and ask the user to complete login manually in the browser, then continue.

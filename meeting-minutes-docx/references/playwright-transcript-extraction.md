@@ -36,6 +36,10 @@ The same page can also include non-transcript content that must be ignored:
 
 The extraction uses exactly **two** Playwright MCP calls after navigation:
 
+### Preflight: Temporary Bridge Timeout
+
+If `browser_navigate` fails with an error like `Extension connection timeout` or `Playwright MCP Bridge`, do not switch to non-browser fallback yet. First run `browser_tabs list`; if the current tab is the Playwright MCP extension connection page, the bridge may have just finished handshaking. Retry `browser_navigate` once, then continue with the normal state check if it succeeds.
+
 ### Call 1: State Check (`browser_evaluate`)
 
 A single lightweight `browser_evaluate` to confirm the page is ready:
@@ -75,6 +79,8 @@ The script handles all remaining work internally:
 - Returns compact JSON (see Output Shape below).
 
 Do **not** use `browser_snapshot` or `browser_press_key` in the normal extraction path. These are reserved for manual debugging when extraction fails.
+
+If the current Playwright tool set does not expose `browser_run_code`, use one `browser_evaluate` call containing the same extraction logic instead. Keep the same behavior: switch to `转写`, scroll `.minutes-module-list`, dedupe turns by `speaker + time + content`, choose the target speaker occurrence, and return the same JSON shape.
 
 ## Row Normalization Rules
 
