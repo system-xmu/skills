@@ -30,6 +30,16 @@ description: "在现有 Marp Markdown 幻灯片中增量补写、重写或扩展
    - 每页只有一个核心结论
    - 标题和要点可以直接嵌入现有文档
    - 与前后页衔接自然，没有突然切换风格或术语
+5. 修改后优先渲染验证：
+   - 当前工作区执行 shell 命令时加 `rtk` 前缀。
+   - `am_xmu` 主题通常依赖 `am_template`，渲染时显式传入两者，避免 Marp CLI 未正确解析 SCSS import：
+     `rtk marp path/to/slides.md --theme-set themes/am_template.scss --theme-set themes/am_xmu.scss --pdf --allow-local-files`
+   - HTML 预览同理：
+     `rtk marp path/to/slides.md --theme-set themes/am_template.scss --theme-set themes/am_xmu.scss --html --allow-local-files`
+   - 若目标文件使用其它本地主题，保留目标 theme，并按其依赖关系显式加入必要的 `--theme-set`。
+   - 使用本地图片、logo、`.assets/` 资源时加 `--allow-local-files`，否则 PDF 可能生成但图片被安全策略拦截。
+   - 如果 PDF 渲染报 `Failed to launch the browser process`，这是 Puppeteer/浏览器进程启动问题；按 Codex 沙箱规则重新请求权限后再运行同一渲染命令。
+   - 若渲染提示 `local file is missing`，用 `rtk rg -n "!\[|src=|assets/|\.svg|\.png|\.jpg" slides.md themes/*.scss` 定位引用；区分是本次修改引入的缺失，还是主题中已有的 logo 路径问题。
 
 ## Hard Constraints
 
@@ -97,6 +107,7 @@ description: "在现有 Marp Markdown 幻灯片中增量补写、重写或扩展
 - 仅在新增封面页时才考虑 `cover_e`；普通补页不主动插入封面或目录页。
 - 如果相邻页面使用 HTML `<div class="ldiv">`、`<div class="rdiv">` 等容器，新增页保持同一套容器命名。
 - 如果目标文档本身偏“组会记录”风格，则优先贴近这种写法：对象明确、动作直接、少解释性套话。
+- 渲染检查时重点看改动页和相邻页；可用 `rtk pdfinfo slides.pdf` 确认页数，用 `rtk pdftoppm -f N -l M -png slides.pdf /tmp/check` 导出相关页截图后查看。
 
 ## Boundaries
 
