@@ -1,4 +1,4 @@
 interface:
   display_name: "Monthly Report DOCX"
-  short_description: "Generate monthly progress DOCX from meeting notes"
-  default_prompt: "Use $monthly-report-docx to extract one month from 组会.md, draft 本月工作进展情况 in the existing style, and export a .docx."
+  short_description: "Generate project-grouped monthly progress DOCX"
+  default_prompt: "Use $monthly-report-docx to collect one month of work notes, group 本月工作进展情况 by project/topic, and export a .docx."

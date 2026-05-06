@@ -8,7 +8,7 @@ import copy
 import re
 import sys
 import zipfile
-from collections import defaultdict
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -25,7 +25,7 @@ XML_NS = "http://www.w3.org/XML/1998/namespace"
 NS = {"w": WORD_NS}
 
 HEADING_RE = re.compile(r"^##\s*(\d{4})年0?(\d{1,2})月0?(\d{1,2})日\s*$")
-TOPIC_RE = re.compile(r"^\*\*(.+?)\*\*[:：]?\s*$")
+TOPIC_RE = re.compile(r"^(?:#{3,6}\s+(.+?)|\*\*(.+?)\*\*[:：]?)\s*$")
 BULLET_RE = re.compile(r"^(\s*)[-*]\s+(.*\S)\s*$")
 TASK_MARKERS = ("TODO", "todo", "Todo")
 PROGRESS_MARKERS = (
@@ -66,6 +66,12 @@ class MeetingItem:
     text: str
     indent: int
     date_label: str
+
+
+@dataclass
+class BodyLine:
+    text: str
+    bold: bool = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,7 +140,7 @@ def parse_meeting_items(blocks: Iterable[tuple[str, list[str]]]) -> list[Meeting
                 continue
             topic_match = TOPIC_RE.match(stripped)
             if topic_match:
-                current_topic = normalize_topic(topic_match.group(1))
+                current_topic = normalize_topic(next(group for group in topic_match.groups() if group))
                 continue
             bullet_match = BULLET_RE.match(line)
             if not bullet_match:
@@ -229,40 +235,42 @@ def load_style_notes(samples_dir: Path) -> dict[str, bool]:
     return {"use_topic_headers": use_topic_headers}
 
 
-def build_progress_lines(items: list[MeetingItem], style_notes: dict[str, bool]) -> list[str]:
-    grouped: dict[str, list[MeetingItem]] = defaultdict(list)
+def build_progress_lines(items: list[MeetingItem], style_notes: dict[str, bool]) -> list[BodyLine]:
+    grouped: OrderedDict[str, list[MeetingItem]] = OrderedDict()
     for item in items:
         if should_keep_item(item.text):
-            grouped[item.topic].append(item)
+            grouped.setdefault(item.topic, []).append(item)
 
     if not grouped:
         raise ValueError("No usable progress items found for the requested month.")
 
-    ordered_topics = sort_topics(grouped)
-    lines: list[str] = []
-    for topic in ordered_topics:
-        selected = sorted(
-            grouped[topic],
-            key=lambda item: (-score_item(item.text, item.indent), item.date_label, item.text),
-        )[:3]
+    lines: list[BodyLine] = []
+    for topic, topic_items in grouped.items():
+        selected = limit_project_items(topic_items)
         if style_notes.get("use_topic_headers", True):
-            lines.append(f"• {topic}")
+            lines.append(BodyLine(topic, bold=True))
             for item in selected:
-                lines.append(f"• {rewrite_item(item.text)}")
+                lines.append(BodyLine(f"• {rewrite_item(item.text)}"))
         else:
             merged = "；".join(rewrite_item(item.text).rstrip("。") for item in selected)
-            lines.append(f"• {topic}：{merged}。")
+            lines.append(BodyLine(f"{topic}：{merged}。", bold=True))
     return lines
 
 
-def sort_topics(grouped: dict[str, list[MeetingItem]]) -> list[str]:
-    def topic_key(topic: str) -> tuple[int, str]:
-        items = grouped[topic]
-        progress_score = sum(score_item(item.text, item.indent) for item in items)
-        generic_penalty = 1 if topic == "本月工作" else 0
-        return (generic_penalty, -progress_score, topic.lower())
-
-    return sorted(grouped.keys(), key=topic_key)
+def limit_project_items(items: list[MeetingItem], max_items: int = 6) -> list[MeetingItem]:
+    if len(items) <= max_items:
+        return items
+    selected = items[: max_items - 1]
+    overflow = "；".join(clean_fragment(item.text).rstrip("。") for item in items[max_items - 1 :])
+    selected.append(
+        MeetingItem(
+            topic=items[0].topic,
+            text=overflow,
+            indent=items[max_items - 1].indent,
+            date_label=items[max_items - 1].date_label,
+        )
+    )
+    return selected
 
 
 def rewrite_item(text: str) -> str:
@@ -270,10 +278,10 @@ def rewrite_item(text: str) -> str:
     text = text.replace("bugfix", "Bugfix")
     text = text.replace("PR", "PR")
     text = text.replace("review", "Review")
-    text = text.replace(":", "，").replace("：", "，")
+    text = text.replace("：", "，")
     text = re.sub(r"\s+", " ", text)
     starts_with_progress = text.startswith(
-        ("完成", "推进", "实现", "修复", "优化", "调研", "学习", "阅读", "合入", "提交", "开发", "定位", "支持", "拆分", "设计", "搭建", "改进")
+        ("完成", "推进", "实现", "修复", "优化", "调研", "学习", "阅读", "合入", "提交", "开发", "定位", "支持", "拆分", "设计", "搭建", "改进", "修正", "重构", "补充", "迁移", "协助")
     )
     contains_progress = any(marker in text for marker in PROGRESS_MARKERS)
     if starts_with_progress or contains_progress:
@@ -281,7 +289,7 @@ def rewrite_item(text: str) -> str:
     elif "待review" in text or "待 review" in text:
         sentence = text.replace("待review", "推进 Review").replace("待 review", "推进 Review")
     else:
-        sentence = f"推进{text}"
+        sentence = text
     sentence = sentence.rstrip("；;，,。")
     return f"{sentence}。"
 
@@ -300,7 +308,14 @@ def derive_output_path(template_docx: Path, month: str, output_docx: str) -> Pat
     return template_docx.with_name(stem + template_docx.suffix)
 
 
-def make_paragraph(template_paragraph: ET.Element, text: str) -> ET.Element:
+def make_paragraph(template_paragraph: ET.Element, body_line: BodyLine | str) -> ET.Element:
+    if isinstance(body_line, BodyLine):
+        text = body_line.text
+        bold = body_line.bold
+    else:
+        text = body_line
+        bold = False
+
     paragraph = copy.deepcopy(template_paragraph)
     for child in list(paragraph):
         if child.tag != f"{{{WORD_NS}}}pPr":
@@ -312,6 +327,13 @@ def make_paragraph(template_paragraph: ET.Element, text: str) -> ET.Element:
         run_pr = first_run.find("w:rPr", NS)
         if run_pr is not None:
             run.append(copy.deepcopy(run_pr))
+    if bold:
+        run_pr = run.find("w:rPr", NS)
+        if run_pr is None:
+            run_pr = ET.Element(f"{{{WORD_NS}}}rPr")
+            run.insert(0, run_pr)
+        if run_pr.find("w:b", NS) is None:
+            run_pr.insert(0, ET.Element(f"{{{WORD_NS}}}b"))
     text_node = ET.SubElement(run, f"{{{WORD_NS}}}t")
     if text.startswith(" ") or text.endswith(" "):
         text_node.set(f"{{{XML_NS}}}space", "preserve")
@@ -320,7 +342,7 @@ def make_paragraph(template_paragraph: ET.Element, text: str) -> ET.Element:
     return paragraph
 
 
-def replace_progress_section(template_docx: Path, output_docx: Path, body_lines: list[str]) -> None:
+def replace_progress_section(template_docx: Path, output_docx: Path, body_lines: list[BodyLine]) -> None:
     with zipfile.ZipFile(template_docx) as source:
         file_map = {name: source.read(name) for name in source.namelist()}
 
@@ -381,7 +403,10 @@ def main() -> int:
     print(f"output_docx: {output_docx}")
     print("body:")
     for line in body_lines:
-        print(line)
+        if line.bold:
+            print(f"**{line.text}**")
+        else:
+            print(line.text)
     return 0
 
 
