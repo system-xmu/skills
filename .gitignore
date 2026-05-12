@@ -214,3 +214,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Third-party lark-cli skills installed from https://github.com/larksuite/cli
+lark-*/
+web-access/

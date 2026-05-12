@@ -102,16 +102,18 @@ Require these tools for the full workflow:
   - If `transcript_page_url` is provided, navigate to it using `browser_navigate`.
   - Otherwise operate on the current browser page.
   - If navigation fails with a Playwright MCP Bridge / extension connection timeout, do not immediately conclude Playwright is unavailable. Run `browser_tabs list` once to give the bridge extension a chance to finish connecting, then retry `browser_navigate` once. Only treat it as unavailable if the retry still fails.
-- Run a single `browser_evaluate` state check to confirm the page is ready.
+- Run a single `browser_evaluate` state check to confirm the page is ready and store extraction parameters on the page.
   - Check: is the page logged in (title contains `录制文件`)? Does it have a `转写` tab? Does it have a `.minutes-module-list` container?
+  - Return only `{ loggedIn, hasTranscriptTab, hasMinutesList, title }`.
+  - Do not return page text samples, `document.body.innerText`, `innerHTML`, `outerHTML`, or accessibility snapshots in the normal path.
+  - In the same evaluation, set `globalThis.__TENCENT_MEETING_EXTRACT_PARAMS__ = { targetSpeaker, anchorTime }`, where `anchorTime` is `'null'` if omitted.
   - If not logged in, stop and ask the user to complete login manually in the browser, then continue.
   - If no `转写` tab, say that Tencent Meeting is the supported page type and ask the user for raw transcript text or a transcript file path instead.
-- Read `scripts/tencent_meeting_extract.js` with the Read tool.
-- Replace parameter placeholders in the script:
-  - `'__TARGET_SPEAKER__'` → the actual `transcript_speaker` value.
-  - `'__ANCHOR_TIME__'` → the actual `transcript_anchor_time` value, or `'null'` if not provided.
-- Run the substituted script via a single `browser_run_code` call (pass as `code` parameter).
+- Run `scripts/tencent_meeting_extract.js` via a single `browser_run_code` call using the `filename` parameter.
+  - Prefer `filename` so the extraction logic remains in the bundled script instead of being reconstructed inline.
+  - Some Playwright MCP clients may still display executed code as tool metadata; this is acceptable as long as page text, HTML, DOM, and accessibility trees are not returned.
   - The script handles all remaining work internally: tab switching, scrolling, deduplication, speaker matching, anchor selection, and discussion window extraction.
+  - The script returns only structured transcript JSON: `selected_occurrence`, `time_range`, `turns`, or a compact error object with optional `speakers` / `occurrences`.
   - Do not use `browser_snapshot`, `browser_click`, `browser_press_key`, or additional `browser_evaluate` calls in the normal path.
 - Parse the returned JSON result:
   - On `error: 'no_transcript'` → tell the user no accurate meeting record was found. Ask whether to continue with PPT-only minutes.

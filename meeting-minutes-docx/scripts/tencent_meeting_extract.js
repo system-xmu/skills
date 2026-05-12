@@ -1,8 +1,8 @@
 /**
  * Tencent Meeting transcript extraction script for Playwright MCP browser_run_code.
  *
- * Usage: Read this file, replace __TARGET_SPEAKER__ and __ANCHOR_TIME__ with actual
- * values, then pass the result to browser_run_code's `code` parameter.
+ * Usage: Store runtime parameters on the page with browser_evaluate, then pass
+ * this file to browser_run_code's `filename` parameter.
  *
  * Returns compact JSON:
  *   { selected_occurrence, time_range, turns }      on success
@@ -10,13 +10,30 @@
  */
 async (page) => {
   // ── Parameters (replaced by skill before execution) ──────────────────────
-  const TARGET_SPEAKER = '__TARGET_SPEAKER__';
-  const ANCHOR_TIME = '__ANCHOR_TIME__'; // null string means no anchor
+  let TARGET_SPEAKER = '__TARGET_SPEAKER__';
+  let ANCHOR_TIME = '__ANCHOR_TIME__'; // null string means no anchor
   const LOOKAHEAD = 5;
+
+  try {
+    const runtimeParams = await page.evaluate(() => globalThis.__TENCENT_MEETING_EXTRACT_PARAMS__ || null);
+    if (runtimeParams && typeof runtimeParams === 'object') {
+      TARGET_SPEAKER = runtimeParams.targetSpeaker || TARGET_SPEAKER;
+      ANCHOR_TIME = runtimeParams.anchorTime || 'null';
+    }
+  } catch {
+    // Keep placeholder-based parameters for compatibility with older inline use.
+  }
 
   const anchorTime = ANCHOR_TIME === 'null' || ANCHOR_TIME === '__ANCHOR_TIME__'
     ? null
     : ANCHOR_TIME;
+
+  if (!TARGET_SPEAKER || TARGET_SPEAKER === '__TARGET_SPEAKER__') {
+    return JSON.stringify({
+      error: 'missing_target_speaker',
+      detail: 'Target speaker is required. Set globalThis.__TENCENT_MEETING_EXTRACT_PARAMS__.targetSpeaker before running extraction.',
+    });
+  }
 
   // ── Constants ────────────────────────────────────────────────────────────
   const UI_NOISE = new Set([
@@ -38,6 +55,13 @@ async (page) => {
     const p = s.split(':').map(Number);
     return p.length === 2 ? p[0] * 60 + p[1] : p[0] * 3600 + p[1] * 60 + p[2];
   };
+  const normalizeTime = (s) => {
+    const p = s.split(':').map(Number);
+    if (p.length === 2) {
+      return `${String(p[0]).padStart(2, '0')}:${String(p[1]).padStart(2, '0')}:00`;
+    }
+    return `${String(p[0]).padStart(2, '0')}:${String(p[1]).padStart(2, '0')}:${String(p[2]).padStart(2, '0')}`;
+  };
   const dedupeKey = (t) => `${t.speaker}\t${t.time}\t${t.content}`;
 
   // ── Step 1: Ensure 转写 tab is active ────────────────────────────────────
@@ -54,6 +78,9 @@ async (page) => {
   // ── Step 2: Locate transcript container ──────────────────────────────────
   const containerSelector = '.minutes-module-list';
   const hasContainer = await page.evaluate((sel) => !!document.querySelector(sel), containerSelector);
+  if (!hasContainer) {
+    return JSON.stringify({ error: 'no_transcript', detail: 'Transcript container not found.' });
+  }
 
   // ── Step 3: Scroll loop with deduplication ───────────────────────────────
   const seenKeys = new Set();
@@ -65,10 +92,11 @@ async (page) => {
    * Returns newly discovered turns (not yet in seenKeys).
    */
   const extractNewTurns = async () => {
-    const raw = await page.evaluate(({ sel, noiseList }) => {
-      const el = document.querySelector(sel) || document.body;
+    const raw = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return '';
       return el.innerText || '';
-    }, { sel: containerSelector, noiseList: [...UI_NOISE] });
+    }, containerSelector);
 
     const lines = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
     const parsed = [];
@@ -86,7 +114,7 @@ async (page) => {
         j++;
       }
       if (content.length) {
-        parsed.push({ speaker, time, content: content.join(' ') });
+        parsed.push({ speaker, time: normalizeTime(time), content: content.join(' ') });
       }
       i = j - 1;
     }
@@ -102,36 +130,38 @@ async (page) => {
     return newTurns;
   };
 
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (el) el.scrollTop = 0;
+  }, containerSelector);
+  await page.waitForTimeout(SCROLL_DELAY);
+
   // Initial extraction before scrolling
   const initial = await extractNewTurns();
   allTurns.push(...initial);
 
-  if (hasContainer) {
-    for (let round = 0; round < MAX_SCROLL_ROUNDS; round++) {
-      // Scroll down
-      await page.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        if (el) el.scrollTop += 1500;
-      }, containerSelector);
-      await page.waitForTimeout(SCROLL_DELAY);
+  for (let round = 0; round < MAX_SCROLL_ROUNDS; round++) {
+    await page.evaluate(({ sel, step }) => {
+      const el = document.querySelector(sel);
+      if (el) el.scrollTop += step;
+    }, { sel: containerSelector, step: SCROLL_STEP });
+    await page.waitForTimeout(SCROLL_DELAY);
 
-      const newBatch = await extractNewTurns();
-      if (newBatch.length === 0) {
-        stableCount++;
-        if (stableCount >= STABLE_THRESHOLD) break;
-      } else {
-        stableCount = 0;
-        allTurns.push(...newBatch);
-      }
-
-      // Check if scrolled to bottom
-      const atBottom = await page.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return true;
-        return el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
-      }, containerSelector);
-      if (atBottom && stableCount >= 1) break;
+    const newBatch = await extractNewTurns();
+    if (newBatch.length === 0) {
+      stableCount++;
+      if (stableCount >= STABLE_THRESHOLD) break;
+    } else {
+      stableCount = 0;
+      allTurns.push(...newBatch);
     }
+
+    const atBottom = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return true;
+      return el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+    }, containerSelector);
+    if (atBottom && stableCount >= 1) break;
   }
 
   // Sort all turns by timestamp
@@ -152,6 +182,7 @@ async (page) => {
     return JSON.stringify({
       error: 'speaker_not_found',
       detail: `Speaker "${TARGET_SPEAKER}" not found. Available speakers: ${speakers.join(', ')}`,
+      speakers,
     });
   }
 
@@ -171,6 +202,7 @@ async (page) => {
       return JSON.stringify({
         error: 'anchor_too_far',
         detail: `Nearest occurrence at ${chosen.time} is >5min from anchor ${anchorTime}. Matches: ${matches.map((m) => m.time).join(', ')}`,
+        occurrences: matches.map((m) => m.time),
       });
     }
   }

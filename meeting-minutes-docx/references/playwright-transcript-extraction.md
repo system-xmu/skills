@@ -40,35 +40,47 @@ The extraction uses exactly **two** Playwright MCP calls after navigation:
 
 If `browser_navigate` fails with an error like `Extension connection timeout` or `Playwright MCP Bridge`, do not switch to non-browser fallback yet. First run `browser_tabs list`; if the current tab is the Playwright MCP extension connection page, the bridge may have just finished handshaking. Retry `browser_navigate` once, then continue with the normal state check if it succeeds.
 
-### Call 1: State Check (`browser_evaluate`)
+### Call 1: State Check + Parameter Injection (`browser_evaluate`)
 
-A single lightweight `browser_evaluate` to confirm the page is ready:
+A single lightweight `browser_evaluate` to confirm the page is ready and store
+runtime extraction parameters:
 
 ```js
 () => {
+  globalThis.__TENCENT_MEETING_EXTRACT_PARAMS__ = {
+    targetSpeaker: '__TARGET_SPEAKER__',
+    anchorTime: '__ANCHOR_TIME_OR_NULL__',
+  };
   const title = document.title || '';
-  const text = document.body.innerText || '';
   const loggedIn = title.includes('录制文件');
-  const hasTranscriptTab = text.includes('转写');
+  const hasTranscriptTab = [...document.querySelectorAll('[role="tab"], button, span, div')]
+    .some((el) => (el.innerText || el.textContent || '').trim() === '转写');
   const hasMinutesList = !!document.querySelector('.minutes-module-list');
   return { loggedIn, hasTranscriptTab, hasMinutesList, title };
 }
 ```
+
+The state check must return only these four fields. Do not return `textSample`,
+`document.body.innerText`, `innerHTML`, `outerHTML`, or an accessibility snapshot in
+the normal path.
 
 Handle results:
 - `loggedIn === false` → stop, ask user to complete login manually in the browser.
 - `hasTranscriptTab === false` → stop, page is not a Tencent Meeting transcript page.
 - Otherwise → proceed to Call 2.
 
-### Call 2: Full Extraction (`browser_run_code`)
+### Call 2: Full Extraction (`browser_run_code` with `filename`)
 
-Use the external script at `scripts/tencent_meeting_extract.js`:
+Run the static extraction script with `filename`:
 
-1. Read the script file with the Read tool.
-2. Replace parameter placeholders:
-   - `'__TARGET_SPEAKER__'` → the actual `transcript_speaker` value.
-   - `'__ANCHOR_TIME__'` → the actual `transcript_anchor_time` value, or `'null'` if not provided.
-3. Pass the substituted code string to `browser_run_code`'s `code` parameter.
+1. Pass `scripts/tencent_meeting_extract.js` to `browser_run_code` as the `filename`
+   parameter.
+2. Prefer `filename` so the extraction logic remains in the bundled script instead of
+   being reconstructed inline. Some MCP clients may still display executed code as tool
+   metadata; that is acceptable as long as page text, HTML, DOM, and accessibility
+   trees are not returned.
+3. The script reads `globalThis.__TENCENT_MEETING_EXTRACT_PARAMS__` from the page and
+   returns structured transcript JSON only.
 
 The script handles all remaining work internally:
 - Switches to `转写` tab if needed.
@@ -76,11 +88,12 @@ The script handles all remaining work internally:
 - Scrolls through the full transcript with deduplication (key: `speaker + time + content`).
 - Selects the target speaker occurrence (with optional anchor time proximity check).
 - Extracts the discussion window using the 5-turn lookahead rule.
-- Returns compact JSON (see Output Shape below).
+- Returns structured JSON (see Output Shape below).
 
 Do **not** use `browser_snapshot` or `browser_press_key` in the normal extraction path. These are reserved for manual debugging when extraction fails.
 
-If the current Playwright tool set does not expose `browser_run_code`, use one `browser_evaluate` call containing the same extraction logic instead. Keep the same behavior: switch to `转写`, scroll `.minutes-module-list`, dedupe turns by `speaker + time + content`, choose the target speaker occurrence, and return the same JSON shape.
+If the current Playwright tool set does not expose a `filename` parameter, inline
+execution is allowed as a fallback, but never return page text or HTML.
 
 ## Row Normalization Rules
 
@@ -136,7 +149,7 @@ Handled by the extraction script:
 
 ## Output Shape
 
-The extraction script returns a JSON string with one of two shapes:
+The Playwright call returns a JSON string with one of two shapes:
 
 **Success:**
 
