@@ -10,6 +10,7 @@ import sys
 import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
@@ -78,7 +79,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate a monthly report .docx from meeting notes."
     )
-    parser.add_argument("--month", required=True, help="Target month in YYYY-MM format.")
+    parser.add_argument(
+        "--month",
+        default="",
+        help="Target month in YYYY-MM format. Defaults to the previous calendar month.",
+    )
     parser.add_argument("--meetings-md", default=str(DEFAULT_MEETINGS_MD))
     parser.add_argument("--template-docx", default=str(DEFAULT_TEMPLATE_DOCX))
     parser.add_argument("--samples-dir", default=str(DEFAULT_SAMPLES_DIR))
@@ -95,6 +100,16 @@ def parse_month(month: str) -> tuple[int, int]:
     if not 1 <= month_num <= 12:
         raise ValueError(f"Invalid month '{month}'. Month must be between 01 and 12.")
     return year, month_num
+
+
+def default_month(today: date | None = None) -> str:
+    today = today or date.today()
+    year = today.year
+    month_num = today.month - 1
+    if month_num == 0:
+        year -= 1
+        month_num = 12
+    return f"{year:04d}-{month_num:02d}"
 
 
 def read_text(path: Path) -> str:
@@ -342,11 +357,49 @@ def make_paragraph(template_paragraph: ET.Element, body_line: BodyLine | str) ->
     return paragraph
 
 
-def replace_progress_section(template_docx: Path, output_docx: Path, body_lines: list[BodyLine]) -> None:
+def paragraph_text(paragraph: ET.Element) -> str:
+    texts = [node.text or "" for node in paragraph.findall(".//w:t", NS)]
+    return "".join(texts)
+
+
+def set_paragraph_text(paragraph: ET.Element, text: str) -> None:
+    text_nodes = paragraph.findall(".//w:t", NS)
+    if not text_nodes:
+        run = ET.SubElement(paragraph, f"{{{WORD_NS}}}r")
+        text_node = ET.SubElement(run, f"{{{WORD_NS}}}t")
+        text_node.text = text
+        return
+    text_nodes[0].text = text
+    if text.startswith(" ") or text.endswith(" "):
+        text_nodes[0].set(f"{{{XML_NS}}}space", "preserve")
+    for text_node in text_nodes[1:]:
+        text_node.text = ""
+
+
+def update_report_header(root: ET.Element, year: int, month_num: int, name: str) -> None:
+    report_title = f"{month_num}月工作报表"
+    name_line = f"姓名：{name}                                                     时间：{year}.{month_num}"
+    for paragraph in root.findall(".//w:p", NS):
+        text = paragraph_text(paragraph).strip()
+        if text == "月工作报表" or re.fullmatch(r"\d+月工作报表", text):
+            set_paragraph_text(paragraph, report_title)
+        elif text.startswith(f"姓名：{name}") or text.startswith("姓名："):
+            set_paragraph_text(paragraph, name_line)
+
+
+def replace_progress_section(
+    template_docx: Path,
+    output_docx: Path,
+    body_lines: list[BodyLine],
+    year: int,
+    month_num: int,
+    name: str,
+) -> None:
     with zipfile.ZipFile(template_docx) as source:
         file_map = {name: source.read(name) for name in source.namelist()}
 
     root = ET.fromstring(file_map["word/document.xml"])
+    update_report_header(root, year, month_num, name)
     table = root.find(".//w:tbl", NS)
     if table is None:
         raise ValueError("Template does not contain the expected table.")
@@ -383,21 +436,29 @@ def format_time_range(year: int, month_num: int) -> str:
 
 def main() -> int:
     args = parse_args()
-    year, month_num = parse_month(args.month)
+    month = args.month or default_month()
+    year, month_num = parse_month(month)
     meetings_md = Path(args.meetings_md)
     template_docx = Path(args.template_docx)
     samples_dir = Path(args.samples_dir)
-    output_docx = derive_output_path(template_docx, args.month, args.output_docx)
+    output_docx = derive_output_path(template_docx, month, args.output_docx)
 
     blocks = collect_month_blocks(read_text(meetings_md), year, month_num)
     if not blocks:
-        raise ValueError(f"No meeting notes found for {args.month}.")
+        raise ValueError(f"No meeting notes found for {month}.")
     items = parse_meeting_items(blocks)
     style_notes = load_style_notes(samples_dir)
     body_lines = build_progress_lines(items, style_notes)
-    replace_progress_section(template_docx, output_docx, body_lines)
+    replace_progress_section(
+        template_docx,
+        output_docx,
+        body_lines,
+        year,
+        month_num,
+        args.name,
+    )
 
-    print(f"month: {args.month}")
+    print(f"month: {month}")
     print(f"name: {args.name}")
     print(f"time_range: {format_time_range(year, month_num)}")
     print(f"output_docx: {output_docx}")

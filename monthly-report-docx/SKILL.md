@@ -14,12 +14,11 @@ Use this skill to draft only `本月工作进展情况` and export a final `.doc
 - Style samples: `/Users/jader/Work/研/月报`
 - Output directory: same directory as the template, unless overridden
 
-## Required Input
-
-- `month`: `YYYY-MM`
+## Input
 
 Accept optional input:
 
+- `month`: `YYYY-MM`; if omitted, use the previous calendar month without asking for confirmation
 - `meetings_md_path`
 - `template_docx_path`
 - `samples_dir`
@@ -34,10 +33,11 @@ Before running the script, read:
 
 ## Workflow
 
-1. Confirm the target month.
+1. Infer the target month from the user request. If no month is stated, use the previous calendar month without asking. Ask only when the wording gives conflicting months.
 2. Run:
-   - `python3 scripts/build_monthly_report.py --month <YYYY-MM>`
-   - Add overrides only when the user provides alternative paths or name.
+   - `python3 scripts/build_monthly_report.py`
+   - Add `--month <YYYY-MM>` only when the user states a month.
+   - Add other overrides only when the user provides alternative paths or name.
 3. Review the printed body text when the user wants a draft first.
 4. Deliver the generated `.docx`.
 
@@ -51,9 +51,10 @@ The script will:
 - Recognize project/topic markers from bold lines such as `**vllm-omni**` and Markdown headings such as `### vllm-omni` or `#### batch scheduler support`.
 - Render project/topic lines as bold headings without `•`; render progress items as bullet paragraphs.
 - Use sample monthly reports to keep the familiar “项目标题 + 进展条目” writing style.
+- Update the report title and name/time line for the target month, such as `6月工作报表` and `时间：2026.6`.
 - Prefer completed, merged, fixed, implemented, optimized, studied, and actively progressed items.
 - Avoid filling `上月工作回顾及本周计划`、`需在例会上协调解决的问题及建议方法`、`下月工作计划`.
-- Preserve the existing `.docx` layout and replace only the body under `本月工作进展情况：`; do not proactively modify title, name, time, or other template fields.
+- Preserve the existing `.docx` layout, update only the title/time fields, and replace only the body under `本月工作进展情况：`; do not fill other template sections.
 
 ## Output Rules
 
