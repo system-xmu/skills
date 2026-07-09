@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a Marp deck to PDF and extract the report section nearest to a target date."""
+"""Render a Marp deck to PDF and extract a dated section when available."""
 
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ DATE_PATTERNS = (
 MARP_FRONTMATTER_RE = re.compile(r"\A---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL)
 WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_THEME_SET = (
-    WORKSPACE_ROOT / "themes" / "am_xmu.scss",
     WORKSPACE_ROOT / "themes" / "am_template.scss",
+    WORKSPACE_ROOT / "themes" / "am_xmu.scss",
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render a Marp markdown deck to PDF and slice a dated report section.",
+        description="Render a Marp markdown deck to PDF and slice a dated report section when available.",
     )
     parser.add_argument(
         "--ppt-md",
@@ -166,18 +166,15 @@ def render_pdf(markdown_path: Path, pdf_path: Path) -> None:
     cmd = require_render_command()
     cmd.extend(
         [
-            "--theme-set",
-            *resolve_theme_set(),
             str(markdown_path),
-            "--pdf",
-            "--allow-local-files",
-            "-o",
-            str(pdf_path),
         ]
     )
+    for theme_path in resolve_theme_set():
+        cmd.append(f"--theme-set={theme_path}")
+    cmd.extend(["--pdf", "--allow-local-files", "-o", str(pdf_path)])
 
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd,
             check=True,
             cwd=str(markdown_path.parent),
@@ -189,6 +186,25 @@ def render_pdf(markdown_path: Path, pdf_path: Path) -> None:
         stdout = exc.stdout.strip() if exc.stdout else ""
         detail = stderr or stdout or "unknown render failure"
         raise RuntimeError(f"failed to render Marp deck to PDF: {detail}") from exc
+
+    stdout = result.stdout.strip() if result.stdout else ""
+    stderr = result.stderr.strip() if result.stderr else ""
+    if stdout.startswith("Usage:") or stderr.startswith("Usage:"):
+        detail = stderr or stdout
+        raise RuntimeError(
+            "Marp printed CLI usage while returning success. This usually means "
+            "--theme-set consumed the input path; pass the deck path before "
+            "theme-set options or use --theme-set=<path>. "
+            f"Marp output: {detail}"
+        )
+
+    if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+        raise RuntimeError(
+            "Marp reported success but the expected PDF was not created. "
+            "Check --theme-set arguments; custom themes that import another local "
+            "theme must pass each theme with its own --theme-set flag, with the "
+            "imported/base theme before the dependent theme."
+        )
 
 
 def discover_dates(markdown_content: str, pdf_path: Path) -> list[tuple[dt.date, str]]:
@@ -253,8 +269,11 @@ def main() -> int:
 
     candidates = discover_dates(markdown_content, full_pdf)
     if not candidates:
-        print("[ERROR] no dated sections found in Marp deck or rendered PDF.", file=sys.stderr)
-        return 2
+        print(
+            "[OK] No dated sections found; treating this as a standalone deck and keeping the full PDF: "
+            f"{full_pdf}"
+        )
+        return 0
 
     if args.report_date:
         target_date, normalized_date = normalize_date(args.report_date)

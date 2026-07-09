@@ -36,8 +36,9 @@ async (page) => {
   }
 
   // ── Constants ────────────────────────────────────────────────────────────
+  const TRANSCRIPT_TAB_LABELS = ['逐字稿', '转写'];
   const UI_NOISE = new Set([
-    '转写', '纪要', 'AI小助手', '章节', '发言人', '话题',
+    '逐字稿', '转写', '纪要', 'AI小助手', '章节', '发言人', '话题', '时间轴',
     '内容由 AI 生成，仅供参考', '定位到正在播放位置', '闪记', '已复制',
     '分享', '另存为', '翻译', '播放视频', '正在讲话：',
     '智能优化版', '元宝提供服务，前往元宝体验更多能力',
@@ -62,23 +63,98 @@ async (page) => {
     }
     return `${String(p[0]).padStart(2, '0')}:${String(p[1]).padStart(2, '0')}:${String(p[2]).padStart(2, '0')}`;
   };
+  const normalizeSpeaker = (s) => s.replace(/[：:]\s*$/, '').trim();
   const dedupeKey = (t) => `${t.speaker}\t${t.time}\t${t.content}`;
 
-  // ── Step 1: Ensure 转写 tab is active ────────────────────────────────────
-  try {
-    const transcribeTab = page.locator('text=转写').first();
-    if (await transcribeTab.isVisible({ timeout: 3000 })) {
-      await transcribeTab.click();
-      await page.waitForTimeout(1000);
+  // ── Step 1: Ensure transcript tab is active ─────────────────────────────
+  let activatedTab = null;
+  for (const label of TRANSCRIPT_TAB_LABELS) {
+    try {
+      const tab = page.getByRole('button', { name: label, exact: true }).first();
+      if (await tab.isVisible({ timeout: 1000 })) {
+        const isActive = await tab.evaluate((el) => {
+          const className = String(el.className || '');
+          return className.includes('active') || el.getAttribute('aria-selected') === 'true';
+        });
+        if (!isActive) {
+          await tab.click();
+          await page.waitForTimeout(1000);
+        }
+        activatedTab = label;
+        break;
+      }
+    } catch {
+      // Try the DOM fallback below.
     }
-  } catch {
-    // Tab may already be active or not found; continue
+  }
+  if (!activatedTab) {
+    try {
+      activatedTab = await page.evaluate((labels) => {
+        const isVisible = (el) => {
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0;
+        };
+        const candidates = [...document.querySelectorAll('[role="tab"], button, span, div')];
+        const tab = candidates.find((el) => labels.includes((el.innerText || el.textContent || '').trim()) && isVisible(el));
+        if (!tab) return null;
+        tab.click();
+        return (tab.innerText || tab.textContent || '').trim();
+      }, TRANSCRIPT_TAB_LABELS);
+      if (activatedTab) {
+        await page.waitForTimeout(1000);
+      }
+    } catch {
+      // Tab may already be active or not found; container detection will validate.
+    }
   }
 
   // ── Step 2: Locate transcript container ──────────────────────────────────
-  const containerSelector = '.minutes-module-list';
-  const hasContainer = await page.evaluate((sel) => !!document.querySelector(sel), containerSelector);
-  if (!hasContainer) {
+  const containerSelector = await page.evaluate(() => {
+    const marker = 'data-codex-transcript-container';
+    document.querySelectorAll(`[${marker}]`).forEach((el) => el.removeAttribute(marker));
+
+    const isVisible = (el) => {
+      const style = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const score = (el) => {
+      const text = el.innerText || '';
+      const timeCount = (text.match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g) || []).length;
+      const lineCount = text.split(/\n+/).filter(Boolean).length;
+      const scrollScore = el.scrollHeight > el.clientHeight ? 10 : 0;
+      return timeCount * 20 + lineCount + scrollScore;
+    };
+    const selectors = [
+      '.minutes-module-list',
+      '[class*="minutes-module-list"]',
+      '[class*="transcript"]',
+      '[class*="Transcript"]',
+      '[class*="word"]',
+      '[class*="Word"]',
+      '[class*="subtitle"]',
+      '[class*="Subtitle"]',
+    ];
+    const candidates = selectors
+      .flatMap((sel) => [...document.querySelectorAll(sel)])
+      .filter((el, index, arr) => arr.indexOf(el) === index)
+      .filter(isVisible)
+      .map((el) => ({ el, value: score(el) }))
+      .filter((item) => item.value > 0)
+      .sort((a, b) => b.value - a.value);
+    const chosen = candidates[0];
+    if (!chosen) return null;
+    chosen.el.setAttribute(marker, 'true');
+    return `[${marker}="true"]`;
+  });
+  if (!containerSelector) {
     return JSON.stringify({ error: 'no_transcript', detail: 'Transcript container not found.' });
   }
 
@@ -101,8 +177,20 @@ async (page) => {
     const lines = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
     const parsed = [];
 
-    for (let i = 0; i < lines.length - 2; i++) {
-      const speaker = lines[i];
+    for (let i = 0; i < lines.length; i++) {
+      const inline = lines[i].match(/^(.+?)\s+(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)$/);
+      if (inline) {
+        const speaker = normalizeSpeaker(inline[1]);
+        const time = inline[2];
+        const content = inline[3].trim();
+        if (speaker && content && isTime(time) && !UI_NOISE.has(speaker)) {
+          parsed.push({ speaker, time: normalizeTime(time), content });
+          continue;
+        }
+      }
+
+      if (i >= lines.length - 2) break;
+      const speaker = normalizeSpeaker(lines[i]);
       const time = lines[i + 1];
       if (!isTime(time) || UI_NOISE.has(speaker)) continue;
 

@@ -18,7 +18,9 @@ The tested Tencent Meeting recording page exposes these stable cues after succes
 - Page title: `录制文件`
 - Header area with meeting title, meeting date/time, and file counts
 - A player region on the left
-- A right-side content panel with tabs `转写`, `纪要`, and `AI小助手`
+- A right-side content panel with transcript-related tabs. Older pages expose
+  `转写`, `纪要`, and `AI小助手`; the newer Tencent Meeting recording UI exposes
+  `纪要`, `时间轴`, and `逐字稿`.
 - A transcript area whose rendered text contains repeated speaker turns in this shape:
   - `speaker`
   - `timestamp`
@@ -54,7 +56,7 @@ runtime extraction parameters:
   const title = document.title || '';
   const loggedIn = title.includes('录制文件');
   const hasTranscriptTab = [...document.querySelectorAll('[role="tab"], button, span, div')]
-    .some((el) => (el.innerText || el.textContent || '').trim() === '转写');
+    .some((el) => ['转写', '逐字稿'].includes((el.innerText || el.textContent || '').trim()));
   const hasMinutesList = !!document.querySelector('.minutes-module-list');
   return { loggedIn, hasTranscriptTab, hasMinutesList, title };
 }
@@ -83,7 +85,8 @@ Run the static extraction script with `filename`:
    returns structured transcript JSON only.
 
 The script handles all remaining work internally:
-- Switches to `转写` tab if needed.
+- Switches to the transcript tab (`逐字稿` in the current UI, `转写` in the older
+  UI) if needed.
 - Locates the `.minutes-module-list` container.
 - Scrolls through the full transcript with deduplication (key: `speaker + time + content`).
 - Selects the target speaker occurrence (with optional anchor time proximity check).
@@ -121,7 +124,7 @@ The extraction script uses these heuristics internally:
 - Prefer parsing from the `.minutes-module-list` container `innerText`.
 - A valid transcript turn matches: speaker label → timestamp (`36:59` or `1:03:05`) → utterance content.
 - UI noise lines are excluded via a built-in set:
-  - `转写`, `纪要`, `AI小助手`, `章节`, `发言人`, `话题`
+- `逐字稿`, `转写`, `纪要`, `AI小助手`, `章节`, `发言人`, `话题`, `时间轴`
   - `内容由 AI 生成，仅供参考`, `定位到正在播放位置`, `闪记`, `已复制`
   - `分享`, `另存为`, `翻译`, `播放视频`, `正在讲话：`
   - `智能优化版`, `元宝提供服务，前往元宝体验更多能力`, `展开`, `收起`

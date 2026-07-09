@@ -7,7 +7,7 @@ description: Generate structured meeting minutes and export Word (.docx) from me
 
 ## Overview
 
-Use this skill to convert meeting transcript content and PPT Markdown into a finalized Chinese meeting-minutes Markdown document, then export it to `.docx` via Pandoc. Support transcript input from raw text, a local transcript file, or Playwright MCP extraction from Tencent Meeting transcript result pages. The Tencent Meeting page flow has been tested against a real recording page where the right-side content area exposes `转写`, `纪要`, and `AI小助手` tabs, and the transcript body renders as repeated `speaker -> timestamp -> content` turn blocks. When extracting from a page, locate a discussion window by target speaker plus timestamp anchor, include other speakers within that exchange, then feed the extracted transcript into the existing cleanup and export pipeline.
+Use this skill to convert meeting transcript content and PPT Markdown into a finalized Chinese meeting-minutes Markdown document, then export it to `.docx` via Pandoc. Support transcript input from raw text, a local transcript file, or Playwright MCP extraction from Tencent Meeting transcript result pages. The Tencent Meeting page flow has been tested against real recording pages where the right-side content area exposes either the older `转写`, `纪要`, and `AI小助手` tabs or the newer `纪要`, `时间轴`, and `逐字稿` tabs, and the transcript body renders as repeated `speaker -> timestamp -> content` turn blocks. When extracting from a page, locate a discussion window by target speaker plus timestamp anchor, include other speakers within that exchange, then feed the extracted transcript into the existing cleanup and export pipeline.
 
 ## Inputs
 
@@ -71,6 +71,19 @@ Treat `ppt_md_path` as a Marp deck only if both conditions are true:
 
 If either condition is false, treat it as plain Markdown PPT notes and skip Marp rendering.
 
+## Marp Theme Integrity
+
+For this workspace, `am_xmu.scss` depends on `am_template.scss`. When rendering manually or from scripts, pass both themes in dependency order and repeat `--theme-set` for each file:
+
+```bash
+rtk marp <deck.md> \
+  --theme-set /Users/jader/Work/研/themes/am_template.scss \
+  --theme-set /Users/jader/Work/研/themes/am_xmu.scss \
+  --pdf --allow-local-files -o <full-deck.pdf>
+```
+
+Do not pass only `themes/am_xmu.scss`; Marp may silently fall back to default styling. Do not pass multiple theme files after a single `--theme-set`; the CLI may treat later files as theme-set values. Keep the deck path before `--theme-set` options, or use `--theme-set=<path>`, because `--theme-set` is an array option and can otherwise consume the Markdown input path. Some Marp CLI versions print `Usage:` but still return exit code `0` in that case, so scripts must also verify that the expected PDF exists and is non-empty. After rendering, visually inspect at least one non-cover page before slicing or using the full PDF. A correctly loaded `am_xmu` page has XMU blue headings, two-column classes such as `cols-2-64`, footer text, and themed code/table styling; a failed render looks like plain black Markdown on a white page.
+
 ## Dependencies
 
 Require these tools for the full workflow:
@@ -103,12 +116,12 @@ Require these tools for the full workflow:
   - Otherwise operate on the current browser page.
   - If navigation fails with a Playwright MCP Bridge / extension connection timeout, do not immediately conclude Playwright is unavailable. Run `browser_tabs list` once to give the bridge extension a chance to finish connecting, then retry `browser_navigate` once. Only treat it as unavailable if the retry still fails.
 - Run a single `browser_evaluate` state check to confirm the page is ready and store extraction parameters on the page.
-  - Check: is the page logged in (title contains `录制文件`)? Does it have a `转写` tab? Does it have a `.minutes-module-list` container?
+  - Check: is the page logged in (title contains `录制文件`)? Does it have a transcript tab (`转写` or `逐字稿`)? Does it have a `.minutes-module-list` container?
   - Return only `{ loggedIn, hasTranscriptTab, hasMinutesList, title }`.
   - Do not return page text samples, `document.body.innerText`, `innerHTML`, `outerHTML`, or accessibility snapshots in the normal path.
   - In the same evaluation, set `globalThis.__TENCENT_MEETING_EXTRACT_PARAMS__ = { targetSpeaker, anchorTime }`, where `anchorTime` is `'null'` if omitted.
   - If not logged in, stop and ask the user to complete login manually in the browser, then continue.
-  - If no `转写` tab, say that Tencent Meeting is the supported page type and ask the user for raw transcript text or a transcript file path instead.
+  - If no transcript tab (`转写` or `逐字稿`), say that Tencent Meeting is the supported page type and ask the user for raw transcript text or a transcript file path instead.
 - Run `scripts/tencent_meeting_extract.js` via a single `browser_run_code` call using the `filename` parameter.
   - Prefer `filename` so the extraction logic remains in the bundled script instead of being reconstructed inline.
   - Some Playwright MCP clients may still display executed code as tool metadata; this is acceptable as long as page text, HTML, DOM, and accessibility trees are not returned.
@@ -128,7 +141,7 @@ Require these tools for the full workflow:
 - Always parse visible slide content and HTML comments (speaker notes).
 - Keep title, names, method terms, metrics, and dates for factual alignment.
 
-5. If the PPT is a Marp deck, render and slice it before drafting minutes.
+5. If the PPT is a Marp deck, render it before drafting minutes, and slice it only when the deck has dated report sections.
 - Determine the final `.docx` output location first.
   - If `output_docx_path` is provided, use its parent directory as the render output directory.
   - Otherwise use the default `.docx` output directory `/Users/jader/Desktop/temp` as the render output directory.
@@ -136,13 +149,16 @@ Require these tools for the full workflow:
 - If `report_date` is provided, pass `--report-date <report_date>`.
 - The script must:
   - Render the full deck to `<deck_stem>.pdf`.
-  - Extract the selected section as `<deck_stem>_<normalized_date>.pptx`.
+  - If dated report sections are found, extract the selected section as `<deck_stem>_<normalized_date>.pptx`.
+  - If no dated sections are found, treat the deck as an independent PPT document: do not force slicing, keep the full deck PDF, and continue with the original Markdown plus full PDF as factual references.
   - Prefer `marp` in `PATH`, otherwise use `npx @marp-team/marp-cli`.
   - Stop with a concrete dependency message if neither render path works.
-- If `report_date` is omitted, the script must select the section whose date is nearest to the current system date. If two sections are equally near, choose the later date.
+  - Pass custom themes with separate `--theme-set` flags in dependency order, e.g. `am_template.scss` before `am_xmu.scss`.
+  - Fail if Marp reports success but the expected full-deck PDF is missing or empty.
+- If dated report sections exist and `report_date` is omitted, the script must select the section whose date is nearest to the current system date. If two sections are equally near, choose the later date.
 - When defaulting the date, explicitly tell the user which date was chosen, for example:
   - `未指定汇报日期，默认选择距离当前日期 2026年03月30日 最近的章节：2026年03月30日。`
-- Use both the original Markdown deck and the sliced PPTX as factual references. Do not replace the Markdown parsing path with the sliced output.
+- Use both the original Markdown deck and the rendered output as factual references. For dated decks, use the sliced PPTX; for standalone decks without date structure, use the full PDF. Do not replace the Markdown parsing path with the rendered output.
 
 6. If the PPT is not a Marp deck, continue directly with the Markdown content.
 - Do not require Marp rendering.
@@ -174,7 +190,8 @@ Require these tools for the full workflow:
 - Output must be a `.docx` file.
 - Default output directory is `/Users/jader/Desktop/temp`.
 - If `output_docx_path` is provided, use it as highest priority.
-- For Marp input, only keep the sliced section PDF/PPTX in the output directory. Delete the full deck PDF after slicing unless the user explicitly asks to keep it.
+- For Marp input with dated sections, only keep the sliced section PDF/PPTX in the output directory. Delete the full deck PDF after slicing unless the user explicitly asks to keep it.
+- For standalone Marp/PPT documents without dated sections, do not force section slicing; keep the full deck PDF in the output directory.
 - For page extraction mode, report the selected speaker occurrence and extracted time range before generating the final document.
 - If no accurate meeting record was available and the user chose to continue, tell the user that the output is based only on PPT content and that detailed discussion reconstruction was skipped.
 - Do not fabricate facts missing from both PPT and transcript.
