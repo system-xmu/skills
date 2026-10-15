@@ -22,8 +22,13 @@ DEFAULT_TEMPLATE_DOCX = WORKSPACE_ROOT / "月报" / "25硕-张江杰-x月工作�
 DEFAULT_SAMPLES_DIR = WORKSPACE_ROOT / "月报"
 
 WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml"
 XML_NS = "http://www.w3.org/XML/1998/namespace"
 NS = {"w": WORD_NS}
+
+ET.register_namespace("w", WORD_NS)
+ET.register_namespace("w14", W14_NS)
 
 HEADING_RE = re.compile(r"^##\s*(\d{4})年0?(\d{1,2})月0?(\d{1,2})日\s*$")
 TOPIC_RE = re.compile(r"^(?:#{3,6}\s+(.+?)|\*\*(.+?)\*\*[:：]?)\s*$")
@@ -399,6 +404,10 @@ def replace_progress_section(
         file_map = {name: source.read(name) for name in source.namelist()}
 
     root = ET.fromstring(file_map["word/document.xml"])
+    # ElementTree drops namespace declarations that are referenced only by the
+    # mc:Ignorable value. Keeping that attribute would leave dangling prefixes
+    # (for example, w15/wp14) and make otherwise valid output fail in Pandoc.
+    root.attrib.pop(f"{{{MC_NS}}}Ignorable", None)
     update_report_header(root, year, month_num, name)
     table = root.find(".//w:tbl", NS)
     if table is None:

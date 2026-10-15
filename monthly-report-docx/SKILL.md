@@ -5,7 +5,7 @@ description: Generate a monthly report .docx by collecting one month of work not
 
 # Monthly Report DOCX
 
-Use this skill to draft only `本月工作进展情况` and export a final `.docx`. The month is only a filter for source material; the report body should be organized by project/topic, not by date.
+Use this skill to draft only `本月工作进展情况` and export a final `.docx`. The month is only a filter for source material; the report body should be organized by project/topic, not by date. Always show the exact proposed report body to the user and obtain explicit confirmation before writing or exporting the final `.docx`.
 
 ## Defaults
 
@@ -34,12 +34,20 @@ Before running the script, read:
 ## Workflow
 
 1. Infer the target month from the user request. If no month is stated, use the previous calendar month without asking. Ask only when the wording gives conflicting months.
-2. Run:
+2. Collect and organize the source material, then prepare the exact proposed text for `本月工作进展情况` without modifying the template or generating a `.docx`.
+3. Show the proposed text to the user and stop for explicit confirmation. Treat requests for edits as draft revisions, not as permission to generate the document.
+4. Only after the user explicitly confirms the proposed text, run:
    - `python3 scripts/build_monthly_report.py`
    - Add `--month <YYYY-MM>` only when the user states a month.
    - Add other overrides only when the user provides alternative paths or name.
-3. Review the printed body text when the user wants a draft first.
-4. Deliver the generated `.docx`.
+5. Verify and deliver the generated `.docx`.
+
+## Confirmation Gate
+
+- Never create, overwrite, or export the final `.docx` in the same turn that first presents the draft.
+- Explicit confirmation must refer to the presented draft, for example “确认”“可以生成”“按此写入”.
+- If the user changes any proposed content, present the revised complete draft and wait for confirmation again.
+- Before confirmation, read-only inspection and temporary in-memory drafting are allowed; writing to the report template or output `.docx` is not allowed.
 
 ## Script Behavior
 
@@ -59,6 +67,7 @@ The script will:
 ## Output Rules
 
 - Output must be a `.docx` file.
+- The final `.docx` may be generated only after the confirmation gate is satisfied.
 - If the target month has no meeting notes, stop with an error instead of generating an empty monthly report.
 - Do not invent achievements that are not grounded in the meeting notes.
 - When the user supplies extra work items in the prompt, fold them into the same project/topic grouping before generating the final source notes or report.
