@@ -1,4 +1,4 @@
 interface:
   display_name: "Meeting Minutes DOCX"
   short_description: "整理腾讯会议转写/PPT并生成纪要，支持Marp切分"
-  default_prompt: "Use $meeting-minutes-docx to clean transcript text or read Tencent Meeting transcript pages via Playwright MCP, extract a speaker-and-time anchored discussion window, render and slice Marp decks by report date when needed, and export the final meeting minutes as a .docx."
+  default_prompt: "Use $meeting-minutes-docx with PPT Markdown and local/pasted transcripts or the official $tmeet-skill CLI, fall back to Playwright MCP browser extraction when needed, retain the selected report and its full discussion, and export meeting minutes as .docx with optional Marp rendering and slicing."
